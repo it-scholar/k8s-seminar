@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/it-scholar/k8s-seminar/nginx-app
+  repository: harbor.k8s.it-scholar.com/library/nginx-app
   pullPolicy: IfNotPresent
   # Overrides the appVersion from Chart.yaml when set
   tag: ""
