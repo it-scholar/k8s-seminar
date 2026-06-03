@@ -1,0 +1,15 @@
+apiVersion: v2
+name: nginx-app
+description: Static Hello World served by a hardened nginx container
+type: application
+version: 0.1.0
+appVersion: "latest"
+keywords:
+  - nginx
+  - static
+  - hello-world
+maintainers:
+  - name: it-scholar
+    url: https://github.com/it-scholar
+sources:
+  - https://github.com/it-scholar/k8s-seminar

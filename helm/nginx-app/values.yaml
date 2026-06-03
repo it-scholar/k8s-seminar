@@ -1,0 +1,96 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/it-scholar/k8s-seminar/nginx-app
+  pullPolicy: IfNotPresent
+  # Overrides the appVersion from Chart.yaml when set
+  tag: ""
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  # If not set and create is true, a name is generated from the fullname template
+  name: ""
+
+podAnnotations: {}
+
+# Pod-level security: enforce non-root, lock down syscalls
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 101   # nginx user in nginx:alpine
+  runAsGroup: 101
+  fsGroup: 101
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container-level security: minimal capability set, read-only FS
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  #  kubernetes.io/tls-acme: "true"
+  #  cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: nginx-app.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # - secretName: nginx-app-tls
+  #   hosts:
+  #     - nginx-app.local
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 64Mi
+
+livenessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /
+    port: http
+  initialDelaySeconds: 3
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  # targetMemoryUtilizationPercentage: 80
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
