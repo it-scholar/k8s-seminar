@@ -1,0 +1,48 @@
+# Environment / secrets
+.env
+*.env
+.env.*
+!.env.example
+
+# SSH keys
+*.pem
+*.key
+id_rsa
+id_ed25519
+*.pub
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+ENV/
+.direnv/
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
