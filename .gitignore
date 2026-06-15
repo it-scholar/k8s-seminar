@@ -4,6 +4,9 @@
 .env.*
 !.env.example
 
+# Seminar credentials
+seminar-credentials.md
+
 # SSH keys
 *.pem
 *.key

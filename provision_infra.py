@@ -31,6 +31,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import string
 import sys
 import time
@@ -45,6 +46,7 @@ from hcloud.firewalls.domain import FirewallRule
 from hcloud.images.domain import Image
 from hcloud.locations.domain import Location
 from hcloud.server_types.domain import ServerType
+import paramiko
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
@@ -53,7 +55,7 @@ from hcloud.server_types.domain import ServerType
 INFRA_VM_NAME     = "infra"
 INFRA_SERVER_TYPE = "cpx42"         # 8 vCPU / 16 GB RAM — comfortably runs k3s + Harbor + ArgoCD
 IMAGE_NAME        = "ubuntu-24.04"
-LOCATION_NAME     = "fsn1"
+LOCATION_NAME     = "nbg1"
 DOMAIN_SUFFIX     = "k8s.it-scholar.com"
 HETZNER_KEY_NAME  = "k8s-seminar-provisioner"
 INFRA_FW_NAME     = "k8s-seminar-infra-fw"
@@ -65,12 +67,6 @@ HARBOR_NODEPORT   = 30002   # HTTP NodePort for Harbor (TLS terminated by Caddy)
 ARGOCD_NODEPORT   = 30080   # HTTP NodePort for ArgoCD server (insecure mode)
 
 HARBOR_ROBOT_NAME = "seminar-clusters"   # system-level robot account
-
-# Seminar group primary VMs (must match provision.py GROUPS)
-GROUP_PRIMARIES: dict[str, str] = {
-    "group1": "group1-primary",
-    "group2": "group2-primary",
-}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helm chart values
@@ -171,6 +167,17 @@ SSH_PUBLIC_KEY  = os.path.expanduser(_require("SSH_PUBLIC_KEY_PATH"))
 hc = HCloudClient(token=HCLOUD_TOKEN)
 cf = cf_module.Cloudflare(api_token=CF_API_TOKEN)
 
+
+def _build_group_primaries() -> dict[str, str]:
+    raw = _require("STUDENTS")
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    if not names:
+        sys.exit("ERROR: STUDENTS must contain at least one name.")
+    return {n: f"{n}-primary" for n in names}
+
+
+GROUP_PRIMARIES: dict[str, str] = _build_group_primaries()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Utilities  (mirrors provision.py helpers)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -186,30 +193,46 @@ def gen_password(length: int = 20) -> str:
 
 
 def connection(ip: str, user: str = "root") -> Connection:
-    return Connection(
+    import socket as _socket
+    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    sock.settimeout(90)
+    sock.connect((ip, 22))
+    conn = Connection(
         host=ip,
         user=user,
         connect_kwargs={
             "key_filename": SSH_PRIVATE_KEY,
-            "timeout": 30,
+            "timeout": 90,
             "look_for_keys": False,
             "allow_agent": False,
+            "sock": sock,
         },
     )
+    conn.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    return conn
 
 
-def wait_for_ssh(ip: str, timeout: int = 300) -> None:
+def wait_for_ssh(ip: str, timeout: int = 600) -> None:
+    import subprocess
     log(f"  Waiting for SSH on {ip} ...")
     deadline = time.time() + timeout
+    last_err: str = ""
     while time.time() < deadline:
         try:
-            with connection(ip) as c:
-                c.run("true", hide=True)
-            log(f"  SSH ready: {ip}")
-            return
-        except Exception:
-            time.sleep(6)
-    raise TimeoutError(f"SSH never became available on {ip} after {timeout}s")
+            r = subprocess.run(
+                ["nc", "-zw3", ip, "22"],
+                capture_output=True, timeout=10,
+            )
+            if r.returncode == 0:
+                log(f"  SSH ready: {ip}")
+                return
+            last_err = f"nc exited {r.returncode}: {r.stderr.decode().strip()}"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+        time.sleep(3)
+    raise TimeoutError(
+        f"SSH never became available on {ip} after {timeout}s (last: {last_err})"
+    )
 
 
 def put_text(c: Connection, content: str, remote_path: str) -> None:

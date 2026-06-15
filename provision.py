@@ -19,6 +19,7 @@ from __future__ import annotations
 import io
 import os
 import secrets
+import socket
 import string
 import sys
 import time
@@ -33,15 +34,11 @@ from hcloud.firewalls.domain import FirewallRule
 from hcloud.images.domain import Image
 from hcloud.locations.domain import Location
 from hcloud.server_types.domain import ServerType
+import paramiko
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration — adjust to scale up or change server specs
 # ─────────────────────────────────────────────────────────────────────────────
-
-GROUPS: list[dict] = [
-    {"name": "group1", "primary": "group1-primary", "workers": ["group1-worker1"]},
-    {"name": "group2", "primary": "group2-primary", "workers": ["group2-worker1"]},
-]
 
 SERVER_TYPE        = "cpx32"          # 4 vCPU / 8 GB RAM (AMD EPYC)
 IMAGE_NAME         = "ubuntu-24.04"
@@ -96,6 +93,17 @@ SSH_PUBLIC_KEY   = os.path.expanduser(_require("SSH_PUBLIC_KEY_PATH"))
 hc = HCloudClient(token=HCLOUD_TOKEN)
 cf = cf_module.Cloudflare(api_token=CF_API_TOKEN)
 
+
+def _build_groups() -> list[dict]:
+    raw = _require("STUDENTS")
+    names = [n.strip() for n in raw.split(",") if n.strip()]
+    if not names:
+        sys.exit("ERROR: STUDENTS must contain at least one name.")
+    return [{"name": n, "primary": f"{n}-primary", "workers": [f"{n}-worker1"]} for n in names]
+
+
+GROUPS: list[dict] = _build_groups()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Utilities
 # ─────────────────────────────────────────────────────────────────────────────
@@ -111,32 +119,48 @@ def gen_password(length: int = 16) -> str:
 
 
 def connection(ip: str, user: str = "root") -> Connection:
-    """Return a Fabric Connection for the given IP."""
-    return Connection(
+    """Return a Fabric Connection for the given IP, forced over IPv4."""
+    import socket as _socket
+    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    sock.settimeout(90)
+    sock.connect((ip, 22))
+    conn = Connection(
         host=ip,
         user=user,
         connect_kwargs={
             "key_filename": SSH_PRIVATE_KEY,
-            "timeout": 30,
+            "timeout": 90,
             "look_for_keys": False,
             "allow_agent": False,
+            "sock": sock,
         },
     )
+    conn.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    return conn
 
 
-def wait_for_ssh(ip: str, timeout: int = 300) -> None:
-    """Block until SSH port on *ip* accepts connections."""
+def wait_for_ssh(ip: str, timeout: int = 600) -> None:
+    """Block until SSH port 22 on *ip* accepts TCP connections."""
+    import subprocess
     log(f"  Waiting for SSH on {ip} ...")
     deadline = time.time() + timeout
+    last_err: str = ""
     while time.time() < deadline:
         try:
-            with connection(ip) as c:
-                c.run("true", hide=True)
-            log(f"  SSH ready: {ip}")
-            return
-        except Exception:
-            time.sleep(6)
-    raise TimeoutError(f"SSH never became available on {ip} after {timeout}s")
+            r = subprocess.run(
+                ["nc", "-zw3", ip, "22"],
+                capture_output=True, timeout=10,
+            )
+            if r.returncode == 0:
+                log(f"  SSH ready: {ip}")
+                return
+            last_err = f"nc exited {r.returncode}: {r.stderr.decode().strip()}"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+        time.sleep(3)
+    raise TimeoutError(
+        f"SSH never became available on {ip} after {timeout}s (last: {last_err})"
+    )
 
 
 def put_text(c: Connection, content: str, remote_path: str) -> None:
@@ -186,8 +210,6 @@ def create_vm(
     name: str,
     role: str,
     ssh_key: object,
-    primary_fw: object,
-    worker_fw: object,
 ) -> tuple[str, str]:
     """Create a single VM and return (name, public_ipv4)."""
     existing = hc.servers.get_by_name(name)
@@ -196,7 +218,6 @@ def create_vm(
         log(f"  VM '{name}' already exists (IP: {ip}), skipping creation.")
         return name, ip
 
-    fw = primary_fw if role == "primary" else worker_fw
     log(f"  Creating VM '{name}' ({SERVER_TYPE}, {IMAGE_NAME}, {LOCATION_NAME}) ...")
     response = hc.servers.create(
         name=name,
@@ -204,7 +225,6 @@ def create_vm(
         image=Image(name=IMAGE_NAME),
         location=Location(name=LOCATION_NAME),
         ssh_keys=[ssh_key],
-        firewalls=[fw],
     )
     response.action.wait_until_finished()
     server = hc.servers.get_by_name(name)
@@ -214,12 +234,10 @@ def create_vm(
 
 
 def provision_hetzner() -> dict[str, str]:
-    """Phase 1: create SSH key, firewalls, and all VMs. Returns {name: ip}."""
+    """Phase 1: create SSH key and all VMs (no firewall). Returns {name: ip}."""
     log("=== Phase 1: Hetzner Infrastructure ===")
 
-    ssh_key    = ensure_hetzner_ssh_key()
-    primary_fw = ensure_firewall(PRIMARY_FW_NAME, ["80", "443", "6443"])
-    worker_fw  = ensure_firewall(WORKER_FW_NAME, [])
+    ssh_key = ensure_hetzner_ssh_key()
 
     tasks: list[tuple[str, str]] = []
     for group in GROUPS:
@@ -230,7 +248,7 @@ def provision_hetzner() -> dict[str, str]:
     vm_ips: dict[str, str] = {}
     with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
         futures = {
-            pool.submit(create_vm, name, role, ssh_key, primary_fw, worker_fw): name
+            pool.submit(create_vm, name, role, ssh_key): name
             for name, role in tasks
         }
         for future in as_completed(futures):
@@ -321,60 +339,72 @@ def configure_base_vm(name: str, ip: str, vm_ips: dict[str, str]) -> None:
     sudoers_line = "student ALL=(ALL) NOPASSWD:ALL\n"
 
     log(f"  [{name}] Configuring base OS ...")
-    with connection(ip) as c:
-        # Update & install packages
-        c.run(
-            "apt-get update -qq && "
-            "DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq",
-            hide=True,
-        )
-        c.run(
-            "DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "
-            "curl git vim net-tools",
-            hide=True,
-        )
+    for attempt in range(1, 6):
+        try:
+            with connection(ip) as c:
+                # Wait for any ongoing unattended-upgrades / cloud-init apt lock to clear
+                c.run(
+                    "systemctl stop unattended-upgrades 2>/dev/null || true && "
+                    "flock --timeout 120 /var/lib/dpkg/lock-frontend true 2>/dev/null || true",
+                    hide=True,
+                )
+                # Update & install packages
+                c.run(
+                    "apt-get update -qq && "
+                    "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get upgrade -y -qq",
+                    hide=True,
+                )
+                c.run(
+                    "NEEDRESTART_SUSPEND=1 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "
+                    "curl git vim net-tools",
+                    hide=True,
+                )
 
-        # Create student user (idempotent)
-        c.run("id student &>/dev/null || useradd -m -s /bin/bash student", hide=True)
+                # Create student user (idempotent)
+                c.run("id student &>/dev/null || useradd -m -s /bin/bash student", hide=True)
 
-        # Passwordless sudo
-        put_text(c, sudoers_line, "/etc/sudoers.d/student")
-        c.run("chmod 440 /etc/sudoers.d/student", hide=True)
+                # Passwordless sudo
+                put_text(c, sudoers_line, "/etc/sudoers.d/student")
+                c.run("chmod 440 /etc/sudoers.d/student", hide=True)
 
-        # SSH authorised key for student
-        c.run(
-            "install -d -m 700 -o student -g student /home/student/.ssh",
-            hide=True,
-        )
-        put_text(c, pub_key + "\n", "/home/student/.ssh/authorized_keys")
-        c.run(
-            "chmod 600 /home/student/.ssh/authorized_keys && "
-            "chown student:student /home/student/.ssh/authorized_keys",
-            hide=True,
-        )
+                # SSH authorised key for student
+                c.run(
+                    "install -d -m 700 -o student -g student /home/student/.ssh",
+                    hide=True,
+                )
+                put_text(c, pub_key + "\n", "/home/student/.ssh/authorized_keys")
+                c.run(
+                    "chmod 600 /home/student/.ssh/authorized_keys && "
+                    "chown student:student /home/student/.ssh/authorized_keys",
+                    hide=True,
+                )
 
-        # /etc/hosts entries (idempotent via marker comment)
-        put_text(c, hosts_block, "/tmp/k8s_hosts_addition")
-        c.run(
-            "grep -qF 'k8s-seminar' /etc/hosts || "
-            "cat /tmp/k8s_hosts_addition >> /etc/hosts; "
-            "rm -f /tmp/k8s_hosts_addition",
-            hide=True,
-        )
-
-    log(f"  [{name}] Base configuration done.")
+                # /etc/hosts entries (idempotent via marker comment)
+                put_text(c, hosts_block, "/tmp/k8s_hosts_addition")
+                c.run(
+                    "grep -qF 'k8s-seminar' /etc/hosts || "
+                    "cat /tmp/k8s_hosts_addition >> /etc/hosts; "
+                    "rm -f /tmp/k8s_hosts_addition",
+                    hide=True,
+                )
+            log(f"  [{name}] Base configuration done.")
+            return
+        except Exception as e:
+            log(f"  [{name}] Attempt {attempt}/5 failed: {type(e).__name__}: {e}")
+            if attempt < 5:
+                time.sleep(15)
+    raise RuntimeError(f"[{name}] All 5 configuration attempts failed")
 
 
 def configure_all_base(vm_ips: dict[str, str]) -> None:
     """Phase 3: wait for SSH on all VMs, then configure them in parallel."""
     log("=== Phase 3: Base OS Configuration ===")
 
-    with ThreadPoolExecutor(max_workers=len(vm_ips)) as pool:
-        ssh_futures = {pool.submit(wait_for_ssh, ip): ip for ip in vm_ips.values()}
-        for f in as_completed(ssh_futures):
-            f.result()
+    # Wait sequentially — fast socket checks, avoids thread pool starvation
+    for ip in vm_ips.values():
+        wait_for_ssh(ip)
 
-    with ThreadPoolExecutor(max_workers=len(vm_ips)) as pool:
+    with ThreadPoolExecutor(max_workers=8) as pool:
         cfg_futures = {
             pool.submit(configure_base_vm, name, ip, vm_ips): name
             for name, ip in vm_ips.items()
