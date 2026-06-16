@@ -26,7 +26,7 @@ module "kubernetes" {
   control_plane_nodepools = [
     {
       name     = "control"
-      type     = "cpx31"
+      type     = "cpx32"
       location = "hel1"
       count    = 3
     }
@@ -38,7 +38,7 @@ module "kubernetes" {
   worker_nodepools = [
     {
       name     = "worker"
-      type     = "cpx31"
+      type     = "cpx32"
       location = "hel1"
       count    = 6
     }
@@ -50,7 +50,7 @@ module "kubernetes" {
   cluster_autoscaler_nodepools = [
     {
       name     = "autoscaler"
-      type     = "cpx31"
+      type     = "cpx32"
       location = "hel1"
       min      = 0
       max      = 3
