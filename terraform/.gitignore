@@ -1,0 +1,14 @@
+# Terraform state and sensitive files — never commit these
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate
+terraform.tfstate.backup
+terraform.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Generated cluster credentials
+kubeconfig
+talosconfig

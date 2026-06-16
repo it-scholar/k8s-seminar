@@ -1,0 +1,5 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# Never commit terraform.tfvars to version control.
+
+cluster_name = "k8s-seminar"
+hcloud_token = "your-hetzner-cloud-api-token-here"
