@@ -1,4 +1,4 @@
-name: Build and Push nginx-app
+name: Build and Push Images
 
 on:
   push:
@@ -6,16 +6,16 @@ on:
       - main
     paths:
       - 'nginx-app/**'
+      - 'joke-application/backend/**'
+      - 'joke-application/frontend/**'
   workflow_dispatch:
 
 env:
   GHCR_REGISTRY: ghcr.io
   HARBOR_REGISTRY: harbor.k8s.it-scholar.com
-  GHCR_IMAGE: ${{ github.repository }}/nginx-app
-  HARBOR_IMAGE: harbor.k8s.it-scholar.com/library/nginx-app
 
 jobs:
-  build-and-push:
+  build-nginx-app:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -43,10 +43,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          # Produce tags for both registries from a single metadata step
           images: |
-            ${{ env.GHCR_REGISTRY }}/${{ env.GHCR_IMAGE }}
-            ${{ env.HARBOR_IMAGE }}
+            ${{ env.GHCR_REGISTRY }}/${{ github.repository }}/nginx-app
+            ${{ env.HARBOR_REGISTRY }}/library/nginx-app
           tags: |
             type=sha,prefix=sha-
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
@@ -58,6 +57,102 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./nginx-app
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-joke-backend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.HARBOR_REGISTRY }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.GHCR_REGISTRY }}/${{ github.repository }}/joke-backend
+            ${{ env.HARBOR_REGISTRY }}/library/joke-backend
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push to GHCR and Harbor
+        uses: docker/build-push-action@v5
+        with:
+          context: ./joke-application/backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-joke-frontend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.HARBOR_REGISTRY }}
+          username: ${{ secrets.HARBOR_USERNAME }}
+          password: ${{ secrets.HARBOR_PASSWORD }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.GHCR_REGISTRY }}/${{ github.repository }}/joke-frontend
+            ${{ env.HARBOR_REGISTRY }}/library/joke-frontend
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push to GHCR and Harbor
+        uses: docker/build-push-action@v5
+        with:
+          context: ./joke-application/frontend
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
