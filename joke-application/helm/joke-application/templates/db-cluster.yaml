@@ -1,0 +1,23 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ include "joke-application.dbClusterName" . }}
+  labels:
+    {{- include "joke-application.labels" . | nindent 4 }}
+spec:
+  instances: {{ .Values.database.instances }}
+
+  postgresql:
+    parameters:
+      max_connections: "200"
+
+  bootstrap:
+    initdb:
+      database: {{ .Values.database.dbName }}
+      owner: {{ .Values.database.owner }}
+
+  storage:
+    size: {{ .Values.database.storage.size }}
+    {{- if .Values.database.storage.storageClass }}
+    storageClass: {{ .Values.database.storage.storageClass }}
+    {{- end }}

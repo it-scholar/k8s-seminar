@@ -1,0 +1,23 @@
+Thank you for installing {{ .Chart.Name }} {{ .Chart.AppVersion }}.
+
+Application URL:
+{{- if .Values.ingress.enabled }}
+{{- if .Values.ingress.tls }}
+  https://{{ .Values.ingress.host }}
+{{- else }}
+  http://{{ .Values.ingress.host }}
+{{- end }}
+{{- end }}
+
+CNPG cluster: {{ include "joke-application.dbClusterName" . }}
+
+Useful commands:
+
+  # Watch all pods come up
+  kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }} -w
+
+  # Check CNPG cluster status
+  kubectl get cluster {{ include "joke-application.dbClusterName" . }} -n {{ .Release.Namespace }}
+
+  # Tail backend logs
+  kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=backend -f

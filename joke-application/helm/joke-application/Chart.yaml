@@ -1,0 +1,6 @@
+apiVersion: v2
+name: joke-application
+description: Joke application — SvelteKit frontend, Spring Boot backend, CloudNativePG PostgreSQL
+type: application
+version: 0.1.0
+appVersion: "0.0.1"

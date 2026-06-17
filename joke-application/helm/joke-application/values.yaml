@@ -1,0 +1,58 @@
+nameOverride: ""
+fullnameOverride: ""
+
+backend:
+  image:
+    repository: joke-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+frontend:
+  image:
+    repository: joke-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicaCount: 1
+  # Required: public-facing URL, e.g. https://jokes.example.com
+  # SvelteKit uses ORIGIN to resolve relative fetch() calls during SSR.
+  origin: ""
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 50m
+    limits:
+      memory: 128Mi
+      cpu: 200m
+
+database:
+  # Number of CNPG PostgreSQL instances (1 = standalone, 3 = HA)
+  instances: 1
+  dbName: jokes_db
+  # PostgreSQL role that owns the database; CNPG creates this user automatically
+  owner: jokes_user
+  storage:
+    size: 1Gi
+    storageClass: ""
+
+ingress:
+  enabled: true
+  className: nginx
+  host: jokes.example.com
+  tls: []
+  # - secretName: jokes-tls
+  #   hosts:
+  #     - jokes.example.com
