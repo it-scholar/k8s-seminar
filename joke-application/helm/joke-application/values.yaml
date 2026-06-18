@@ -56,3 +56,8 @@ ingress:
   # - secretName: jokes-tls
   #   hosts:
   #     - jokes.example.com
+
+networkPolicy:
+  # Enable deny-all + scoped allow NetworkPolicies for frontend, backend and database.
+  # Requires Cilium CNI (uses CiliumNetworkPolicy for gateway ingress).
+  enabled: true

@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nginx-app-k8s-seminar
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: k8s-seminar
+    cluster: k8s-seminar
+spec:
+  project: default
+  source:
+    repoURL: git@github.com:it-scholar/k8s-seminar.git
+    targetRevision: HEAD
+    path: helm/nginx-app
+    helm:
+      releaseName: nginx-app
+  destination:
+    server: https://157.180.67.107:6443
+    namespace: nginx-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

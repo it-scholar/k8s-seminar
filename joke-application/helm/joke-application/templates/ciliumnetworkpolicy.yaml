@@ -1,0 +1,23 @@
+{{- if .Values.networkPolicy.enabled }}
+---
+# Allow ingress from Cilium's internal L7 proxy identity (Gateway API traffic).
+# Standard NetworkPolicy namespaceSelector does not capture the 'ingress' entity
+# that Cilium assigns to traffic routed through its Envoy gateway proxy.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-gateway-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "joke-application.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchExpressions:
+    - key: app.kubernetes.io/name
+      operator: In
+      values:
+      - {{ include "joke-application.name" . }}
+  ingress:
+  - fromEntities:
+    - ingress
+{{- end }}

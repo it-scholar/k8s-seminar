@@ -1,0 +1,156 @@
+{{- if .Values.networkPolicy.enabled }}
+---
+# Default deny-all: blocks all ingress and egress for every pod in the namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "joke-application.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+# Allow DNS egress for all pods to kube-system
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dns-networkpolicy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "joke-application.labels" . | nindent 4 }}
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+---
+# Frontend: ingress from kube-system (Cilium envoy); egress to backend only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-networkpolicy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "joke-application.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: frontend
+      app.kubernetes.io/name: {{ include "joke-application.name" . }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Release.Namespace }}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/component: backend
+          app.kubernetes.io/name: {{ include "joke-application.name" . }}
+    ports:
+    - port: {{ .Values.backend.service.port }}
+      protocol: TCP
+---
+# Backend: ingress from kube-system (Cilium envoy) and frontend; egress to database only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-networkpolicy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "joke-application.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: backend
+      app.kubernetes.io/name: {{ include "joke-application.name" . }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - port: {{ .Values.backend.service.port }}
+      protocol: TCP
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Release.Namespace }}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/component: frontend
+          app.kubernetes.io/name: {{ include "joke-application.name" . }}
+    ports:
+    - port: {{ .Values.backend.service.port }}
+      protocol: TCP
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Release.Namespace }}
+      podSelector:
+        matchLabels:
+          cnpg.io/cluster: {{ include "joke-application.dbClusterName" . }}
+    ports:
+    - port: 5432
+      protocol: TCP
+---
+# Database: ingress from backend only on 5432; egress to kube-apiserver
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: database-networkpolicy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "joke-application.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: {{ include "joke-application.dbClusterName" . }}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Release.Namespace }}
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/component: backend
+          app.kubernetes.io/name: {{ include "joke-application.name" . }}
+    ports:
+    - port: 5432
+      protocol: TCP
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: default
+    ports:
+    - port: 443
+      protocol: TCP
+{{- end }}
